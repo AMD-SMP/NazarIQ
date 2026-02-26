@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import type { Theme } from '@/types'
 
 interface ThemeContextType {
@@ -13,14 +13,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t)
-    document.documentElement.className = `theme-${t}`
   }, [])
+
+  // Apply theme class to both <html> and <body> so CSS variables cascade everywhere
+  useEffect(() => {
+    const root = document.documentElement
+    const body = document.body
+    // Remove all theme classes
+    root.classList.remove('theme-command', 'theme-municipal', 'theme-contrast')
+    body.classList.remove('theme-command', 'theme-municipal', 'theme-contrast')
+    // Add current theme class
+    root.classList.add(`theme-${theme}`)
+    body.classList.add(`theme-${theme}`)
+  }, [theme])
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>
-      <div className={`theme-${theme}`}>
-        {children}
-      </div>
+      {children}
     </ThemeContext.Provider>
   )
 }
