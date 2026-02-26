@@ -10,10 +10,10 @@ export function Navbar() {
   const { theme, setTheme } = useThemeContext()
   const location = useLocation()
 
-  const themes: { key: Theme; label: string }[] = [
-    { key: 'command', label: 'C' },
-    { key: 'municipal', label: 'M' },
-    { key: 'contrast', label: 'H' },
+  const themes: { key: Theme; label: string; icon: string }[] = [
+    { key: 'command', label: 'Command', icon: '🌑' },
+    { key: 'municipal', label: 'Municipal', icon: '☀️' },
+    { key: 'contrast', label: 'High Contrast', icon: '◐' },
   ]
 
   return (
@@ -53,11 +53,13 @@ export function Navbar() {
             <button
               key={t.key}
               onClick={() => setTheme(t.key)}
-              className={`px-2 py-1 text-[10px] font-bold transition-colors ${
-                theme === t.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+              title={t.label}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                theme === t.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent'
               }`}
             >
-              {t.label}
+              <span className="text-xs">{t.icon}</span>
+              <span className="hidden sm:inline">{t.label}</span>
             </button>
           ))}
         </div>
