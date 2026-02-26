@@ -9,6 +9,7 @@ export const HAZARD_COLORS: Record<HazardType, string> = {
   STRUCTURAL_FAILURE: '#A55EEA',
   DEBRIS: '#778CA3',
   SEWAGE_OVERFLOW: '#26DE81',
+  OTHER: '#B0BEC5',
 }
 
 export const HAZARD_LABELS: Record<HazardType, string> = {
@@ -20,6 +21,7 @@ export const HAZARD_LABELS: Record<HazardType, string> = {
   STRUCTURAL_FAILURE: 'Structural Failure',
   DEBRIS: 'Debris',
   SEWAGE_OVERFLOW: 'Sewage Overflow',
+  OTHER: 'Other',
 }
 
 export const SEVERITY_COLORS: Record<Severity, string> = {

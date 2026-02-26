@@ -4,6 +4,7 @@ export type HazardType =
   | 'POTHOLE' | 'WATERLOGGING' | 'FALLEN_TREE'
   | 'ROAD_COLLAPSE' | 'CONSTRUCTION_ZONE'
   | 'STRUCTURAL_FAILURE' | 'DEBRIS' | 'SEWAGE_OVERFLOW'
+  | 'OTHER'
 export type SourceName =
   | 'reddit_india' | 'ndtv_news' | 'times_of_india'
   | 'twitter_local' | 'citizen_report'
