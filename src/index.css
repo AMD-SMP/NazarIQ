@@ -17,6 +17,7 @@
     --hazard-structural: 265 80% 63%;
     --hazard-debris: 215 15% 55%;
     --hazard-sewage: 145 70% 51%;
+    --hazard-other: 200 10% 70%;
 
     --radius: 0.5rem;
   }

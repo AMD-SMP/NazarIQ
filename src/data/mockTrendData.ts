@@ -1,6 +1,6 @@
 import type { HazardType } from '@/types'
 
-const hazardTypes: HazardType[] = ['POTHOLE', 'WATERLOGGING', 'FALLEN_TREE', 'ROAD_COLLAPSE', 'CONSTRUCTION_ZONE', 'STRUCTURAL_FAILURE', 'DEBRIS', 'SEWAGE_OVERFLOW']
+const hazardTypes: HazardType[] = ['POTHOLE', 'WATERLOGGING', 'FALLEN_TREE', 'ROAD_COLLAPSE', 'CONSTRUCTION_ZONE', 'STRUCTURAL_FAILURE', 'DEBRIS', 'SEWAGE_OVERFLOW', 'OTHER']
 
 function generateDailyData(base: number, variance: number): number[] {
   return Array.from({ length: 30 }, () => Math.max(0, Math.round(base + (Math.random() - 0.5) * 2 * variance)))
@@ -15,7 +15,7 @@ export const mockTrendData = {
     hazardTypes.forEach(ht => {
       const bases: Record<HazardType, number> = {
         POTHOLE: 8, WATERLOGGING: 5, FALLEN_TREE: 3, ROAD_COLLAPSE: 2,
-        CONSTRUCTION_ZONE: 4, STRUCTURAL_FAILURE: 1, DEBRIS: 3, SEWAGE_OVERFLOW: 2,
+        CONSTRUCTION_ZONE: 4, STRUCTURAL_FAILURE: 1, DEBRIS: 3, SEWAGE_OVERFLOW: 2, OTHER: 1,
       }
       entry[ht] = Math.max(0, Math.round(bases[ht] + (Math.random() - 0.5) * bases[ht]))
     })
