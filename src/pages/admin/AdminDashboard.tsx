@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useFilters } from '@/context/FilterContext'
 import { StatCard } from '@/components/shared/StatCard'
@@ -7,9 +7,11 @@ import { MapSimulation } from '@/components/map/MapSimulation'
 import { ResolutionGauge } from '@/components/charts/ResolutionGauge'
 import { mockActivityLog } from '@/data/mockActivityLog'
 import { mockAlerts } from '@/data/mockAlerts'
-import { Activity, AlertTriangle, Clock, CheckCircle, XCircle, Shield, Bell } from 'lucide-react'
+import { Activity, AlertTriangle, Clock, CheckCircle, XCircle, Shield, Bell, X, ExternalLink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { STATUS_COLORS } from '@/lib/constants'
+import { STATUS_COLORS, SEVERITY_COLORS } from '@/lib/constants'
+import { SeverityBadge } from '@/components/shared/SeverityBadge'
+import { useToast } from '@/hooks/use-toast'
 
 const ACTION_COLORS: Record<string, string> = {
   STATUS_CHANGE: '#2B7FFF',
@@ -19,16 +21,32 @@ const ACTION_COLORS: Record<string, string> = {
   RESOLVED: '#22C55E',
 }
 
+function formatTimestamp(ts: string) {
+  const d = new Date(ts)
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+}
+
 export default function AdminDashboard() {
   const { userName } = useAuth()
   const { incidents, filteredIncidents } = useFilters()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [clock, setClock] = useState(new Date())
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  const alerts = useMemo(() => mockAlerts.filter(a => !dismissedIds.has(a.id)), [dismissedIds])
+  const unreadCount = useMemo(() => alerts.filter(a => a.status === 'SENT' || a.status === 'DELIVERED').length, [alerts])
+
+  const dismissAlert = useCallback((id: string) => {
+    setDismissedIds(prev => new Set(prev).add(id))
+    toast({ title: '✓ Notification dismissed' })
+  }, [toast])
 
   const stats = useMemo(() => {
     const active = incidents.filter(i => i.status !== 'RESOLVED')
@@ -54,13 +72,94 @@ export default function AdminDashboard() {
           <h1 className="font-heading text-lg font-bold text-foreground">Operations Center</h1>
         </div>
         <div className="flex items-center gap-4">
-          <span className="font-mono text-sm text-foreground">{clock.toLocaleTimeString()}</span>
+          <div className="hidden sm:flex flex-col items-end">
+            <span className="font-mono text-sm text-foreground">{clock.toLocaleTimeString()}</span>
+            <span className="font-mono text-[10px] text-muted-foreground">{clock.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</span>
+          </div>
           <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1">
             <span className="text-xs font-semibold text-primary">ADMIN: {userName}</span>
           </div>
           <div className="relative">
-            <Bell className="h-5 w-5 text-muted-foreground" />
-            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground animate-critical-pulse">{mockAlerts.filter(a => a.status === 'SENT').length}</span>
+            <button
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="relative rounded-lg p-2 hover:bg-accent transition-colors"
+            >
+              <Bell className="h-5 w-5 text-muted-foreground" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground animate-critical-pulse">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Notification Panel */}
+            {showNotifications && (
+              <div className="absolute right-0 top-full mt-2 z-50 w-96 max-h-[520px] overflow-hidden rounded-lg border border-border bg-card shadow-xl animate-slide-up">
+                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-4 w-4 text-primary" />
+                    <h4 className="text-sm font-semibold text-foreground">Notifications</h4>
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">{alerts.length}</span>
+                  </div>
+                  <button onClick={() => setShowNotifications(false)} className="rounded p-1 hover:bg-accent transition-colors">
+                    <X className="h-4 w-4 text-muted-foreground" />
+                  </button>
+                </div>
+                <div className="overflow-y-auto max-h-[440px] divide-y divide-border">
+                  {alerts.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No notifications</div>
+                  ) : (
+                    alerts.map(alert => (
+                      <div key={alert.id} className="px-4 py-3 hover:bg-accent/50 transition-colors group">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <SeverityBadge severity={alert.priority} />
+                              <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${
+                                alert.status === 'SENT' ? 'bg-nazar-amber/10 text-nazar-amber' :
+                                alert.status === 'DELIVERED' ? 'bg-nazar-blue/10 text-nazar-blue' :
+                                alert.status === 'ACKNOWLEDGED' ? 'bg-nazar-green/10 text-nazar-green' :
+                                'bg-destructive/10 text-destructive'
+                              }`}>
+                                {alert.status}
+                              </span>
+                            </div>
+                            <p className="text-xs font-medium text-foreground truncate">{alert.subject}</p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{alert.message}</p>
+                            <div className="flex items-center gap-3 mt-1.5">
+                              <span className="font-mono text-[10px] text-muted-foreground">{formatTimestamp(alert.sentAt)}</span>
+                              <span className="text-[10px] text-muted-foreground">by {alert.sentBy}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-[10px] text-muted-foreground">Cities:</span>
+                              {alert.targetCities.map(c => (
+                                <span key={c} className="rounded bg-secondary px-1.5 py-0.5 text-[9px] font-medium text-secondary-foreground">{c}</span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            <button
+                              onClick={() => navigate(`/incident/${alert.incidentId}`)}
+                              className="rounded p-1 hover:bg-primary/10 transition-colors"
+                              title="View incident"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                            </button>
+                            <button
+                              onClick={() => dismissAlert(alert.id)}
+                              className="rounded p-1 hover:bg-destructive/10 transition-colors"
+                              title="Dismiss"
+                            >
+                              <X className="h-3.5 w-3.5 text-muted-foreground" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -106,7 +205,7 @@ export default function AdminDashboard() {
                   <div>
                     <p className="text-foreground font-medium">{log.adminName}</p>
                     <p className="text-muted-foreground">{log.action.replace('_', ' ')} on {log.incidentId}</p>
-                    <p className="font-mono text-[10px] text-muted-foreground">{new Date(log.timestamp).toLocaleString()}</p>
+                    <p className="font-mono text-[10px] text-muted-foreground">{formatTimestamp(log.timestamp)}</p>
                   </div>
                 </div>
               ))}
