@@ -1,73 +1,82 @@
-# Welcome to your Lovable project
+# NazarIQ — Civic Hazard Intelligence
 
-## Project info
+NazarIQ is a React + Vite dashboard that blends live citizen hazard reports with municipal analytics. The UI powers the public landing dashboard, incident map, analytics panels, and admin tooling. This repository now ships with a lightweight Express + MongoDB API so incidents can stream directly from `civic_hazard_db.india_incidents` without relying on mock data.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Tech Stack
 
-## How can I edit this code?
+- React 18 + TypeScript (Vite)
+- shadcn/ui + Tailwind CSS
+- TanStack Query for API state
+- Express + MongoDB Node driver for the incidents API
+- Google Maps (via @vis.gl/react-google-maps) for the live map
 
-There are several ways of editing your application.
+## Requirements
 
-**Use Lovable**
+- Node.js 20+
+- npm 10+
+- MongoDB Atlas (or any MongoDB deployment) seeded with an `india_incidents` collection
+- Google Maps API key (already referenced via `VITE_GOOGLE_MAPS_API_KEY`)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Environment Variables
 
-Changes made via Lovable will be committed automatically to this repo.
+Copy `.env.example` to `.env` and fill in the secrets:
 
-**Use your preferred IDE**
+| Variable                       | Description                                                               |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| `VITE_GOOGLE_MAPS_API_KEY`     | Client-side Maps key.                                                     |
+| `VITE_API_BASE_URL`            | Frontend base path. Use `http://localhost:4000/api` when running locally. |
+| `MONGODB_URI`                  | Full Mongo connection string (includes credentials).                      |
+| `API_PORT`                     | Port for the Express API (defaults to `4000`).                            |
+| `MONGODB_DB`                   | Optional override for the database name (default `civic_hazard_db`).      |
+| `MONGODB_INCIDENTS_COLLECTION` | Optional override for the collection (default `india_incidents`).         |
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+> The `.env` file is gitignored, so keep a personal copy for local dev.
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+## Development Workflow
 
-Follow these steps:
+1. `npm install`
+2. Populate `.env` with your Mongo connection string and API base URL (see above).
+3. Start the incidents API server:
+   ```bash
+   npm run api
+   ```
+4. In a second terminal, start the Vite dev server:
+   ```bash
+   npm run dev
+   ```
+5. Navigate to `http://localhost:5173` for the frontend. All incident data, map markers, and analytics will read from Mongo through the Express API.
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+## API Server (`server/index.ts`)
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+- `/api/incidents` — returns normalized incidents with support for search, city, severity, status, hazard-type, and date-range filters (matching the frontend filter chips).
+- `/api/incidents/:id` — fetch a single incident.
+- `/api/incidents/:id` (PATCH) — update status, assignment, or admin notes with timeline enrichment.
+- `/health` — simple readiness endpoint.
 
-# Step 3: Install the necessary dependencies.
-npm i
+The server normalizes hazard types, severity, coordinates, and derived stats (risk score, confidence, timeline) so the frontend can continue using the same `Incident` TypeScript interface everywhere (map, cards, analytics, etc.).
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+## Available Scripts
 
-**Edit a file directly in GitHub**
+| Command           | Purpose                                                                |
+| ----------------- | ---------------------------------------------------------------------- |
+| `npm run api`     | Start the Express + MongoDB API using `tsx`.                           |
+| `npm run dev`     | Run the Vite dev server. Requires the API to be running for live data. |
+| `npm run build`   | Production build of the frontend.                                      |
+| `npm run lint`    | ESLint.                                                                |
+| `npm run test`    | Vitest suite (jsdom).                                                  |
+| `npm run preview` | Preview the production build.                                          |
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Testing
 
-**Use GitHub Codespaces**
+The dashboard currently ships with regression coverage for auth context, the AdminRoute guard, and baseline examples. Run `npm run test` after backend or UI changes.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Deployment Notes
 
-## What technologies are used for this project?
+- The API server is standalone. Deploy it (and Mongo) anywhere, then point `VITE_API_BASE_URL` at the public base URL + `/api`.
+- The frontend bundles are static and can be deployed to any CDN/hosting (Vercel, Netlify, Azure Static Web Apps, etc.).
 
-This project is built with:
+## Next Steps
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+- Harden the API with authentication + rate limiting.
+- Move analytics endpoints (`/trends`) off mock data using Mongo aggregation pipelines.
+- Add WebSocket/Change Stream support for instant incident pushes to the dashboard.

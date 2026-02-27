@@ -3,9 +3,14 @@ import { useState, useEffect, useRef } from 'react'
 export function useCountUp(target: number, duration = 800): number {
   const [value, setValue] = useState(0)
   const prevTarget = useRef(target)
+  const valueRef = useRef(value)
 
   useEffect(() => {
-    const start = prevTarget.current !== target ? 0 : value
+    valueRef.current = value
+  }, [value])
+
+  useEffect(() => {
+    const start = prevTarget.current !== target ? 0 : valueRef.current
     prevTarget.current = target
     const startTime = performance.now()
 

@@ -5,7 +5,7 @@
 
 ---
 
-## 🚀 Quick Start (Frontend Only)
+## 🚀 Quick Start (Frontend + API)
 
 ```bash
 # Clone the repository
@@ -15,11 +15,54 @@ cd nazariq
 # Install dependencies
 npm install
 
-# Start development server
+# Start the Mongo-backed API (terminal 1)
+npm run api
+
+# Start the Vite dev server (terminal 2)
 npm run dev
 ```
 
-The app runs at `http://localhost:5173` with hot-reload enabled.
+The API listens on `http://localhost:4000` (configurable) and the Vite app runs at `http://localhost:8081` (see `vite.config.ts`) with hot reload.
+
+## ✅ End-to-End Setup Checklist
+
+1. **Clone & install** — `git clone`, `cd nazariq`, and `npm install` at the repo root.
+2. **Copy env template** — `cp .env.example .env` (or duplicate manually on Windows).
+3. **Update secrets** — paste your `MONGODB_URI`, `VITE_API_BASE_URL`, and `VITE_GOOGLE_MAPS_API_KEY`.
+4. **Verify Mongo access** — run `mongosh "<MONGODB_URI>" --eval "db.serverStatus().ok"`; expect `1`.
+5. **Seed/inspect data** — confirm the `civic_hazard_db.india_incidents` collection has recent docs (or import `data/mockIncidents.json`).
+6. **Start the API** — `npm run api` and wait for `NazarIQ API server running`.
+7. **Smoke test the API** — curl `http://localhost:4000/api/incidents?limit=5` or open `http://localhost:4000/health` in a browser.
+8. **Start the frontend** — `npm run dev` in a second terminal; Vite opens on port `8081` per `vite.config.ts`.
+9. **Point the client to the API** — ensure `VITE_API_BASE_URL` matches the API origin (default `http://localhost:4000/api`).
+10. **Confirm maps** — verify the Google Maps layer renders; if not, check the API key restrictions.
+11. **Run tests** — `npm run test` for vitest + React Testing Library smoke coverage.
+12. **Document environment** — update `SETUP.md` / `README.md` if you change ports, env names, or secrets for the team.
+
+### Required Environment Variables
+
+1. Copy `.env.example` to `.env`.
+2. Fill in:
+
+- `MONGODB_URI` — cluster connection string (with credentials)
+- `API_PORT` — optional (defaults to 4000)
+- `VITE_API_BASE_URL` — typically `http://localhost:4000/api` in dev
+- `VITE_GOOGLE_MAPS_API_KEY` — already present if maps were configured earlier
+- (Optional) `VITE_PUBLIC_DEMO_EMAIL`, `VITE_PUBLIC_DEMO_PASS`, `VITE_ADMIN_DEMO_PASS` — override the default demo credentials surfaced on `/login` and `/signup`.
+
+3. (Optional) Override `MONGODB_DB` or `MONGODB_INCIDENTS_COLLECTION` if your cluster uses different names.
+
+Without `VITE_API_BASE_URL`, the frontend will fall back to mock incidents; ensure the var is set so every surface pulls from Mongo.
+
+### Mongo Collection Contract
+
+The API expects the `india_incidents` collection inside `civic_hazard_db` to expose fields such as `hazard_type`, `severity`, `status`, `coordinates`, `location_name`, `city`, `datetime`, `confidence`, etc. The Express layer normalizes these into the strongly typed `Incident` model used across Map, dashboard KPIs, analytics, and admin experiences.
+
+### MongoDB Atlas Notes
+
+- Add the machine’s IP (or `0.0.0.0/0` for testing) to the Atlas Network Access list.
+- Keep the cluster in the same region as your edge functions/backend when possible to minimize latency for live map markers.
+- The API reads **up to 1,200 docs** per trends request; keep at least that many recent incidents available to populate the 90-day analytics view.
 
 ---
 
@@ -64,7 +107,7 @@ src/
 │   ├── ThemeContext.tsx          # 3-theme switcher (command/municipal/contrast)
 │   └── FilterContext.tsx         # Global filter state + incident store
 │
-├── data/                # Mock data (replace with API calls)
+├── data/                # Mock data (still used for trends/sources)
 │   ├── mockIncidents.ts          # 30 realistic incidents
 │   ├── mockSources.ts            # 7 data source configs
 │   ├── mockAdmins.ts             # Admin user profiles
@@ -79,8 +122,12 @@ src/
 │   └── index.ts                 # All TypeScript interfaces & types
 │
 ├── lib/
-│   ├── utils.ts                 # Utility functions (cn, etc.)
-│   └── constants.ts             # Colors, labels, city coordinates
+│   ├── apiClient.ts            # Fetch helper honoring VITE_API_BASE_URL
+│   ├── incidentsApi.ts         # Live incidents (uses API when configured)
+│   ├── trendsApi.ts            # Trend analytics (mock for now)
+│   ├── queryKeys.ts            # TanStack Query keys
+│   ├── utils.ts                # Utility functions (cn, etc.)
+│   └── constants.ts            # Colors, labels, city coordinates
 │
 ├── App.tsx                      # Router + provider tree
 ├── main.tsx                     # Entry point
@@ -92,28 +139,30 @@ src/
 ## 🎨 Design System & Theming
 
 ### Three Themes
-| Theme | Class | Description |
-|-------|-------|-------------|
-| Command | `.theme-command` | Dark ops-center (default) |
-| Municipal | `.theme-municipal` | Light government-friendly |
-| Contrast | `.theme-contrast` | High-contrast accessibility |
+
+| Theme     | Class              | Description                 |
+| --------- | ------------------ | --------------------------- |
+| Command   | `.theme-command`   | Dark ops-center (default)   |
+| Municipal | `.theme-municipal` | Light government-friendly   |
+| Contrast  | `.theme-contrast`  | High-contrast accessibility |
 
 Themes use CSS custom properties in `src/index.css`. All components use semantic tokens (`--background`, `--foreground`, `--primary`, etc.) — never raw colors.
 
 ### Hazard Type Colors
+
 Each of the 9 hazard types has a unique signature color defined in both `index.css` (as HSL vars) and `constants.ts` (as hex for Recharts):
 
-| Type | Color |
-|------|-------|
-| POTHOLE | `#FF6B6B` |
-| WATERLOGGING | `#4ECDC4` |
-| FALLEN_TREE | `#45B7D1` |
-| ROAD_COLLAPSE | `#FF4757` |
-| CONSTRUCTION_ZONE | `#FFA502` |
+| Type               | Color     |
+| ------------------ | --------- |
+| POTHOLE            | `#FF6B6B` |
+| WATERLOGGING       | `#4ECDC4` |
+| FALLEN_TREE        | `#45B7D1` |
+| ROAD_COLLAPSE      | `#FF4757` |
+| CONSTRUCTION_ZONE  | `#FFA502` |
 | STRUCTURAL_FAILURE | `#A55EEA` |
-| DEBRIS | `#778CA3` |
-| SEWAGE_OVERFLOW | `#26DE81` |
-| OTHER | `#B0BEC5` |
+| DEBRIS             | `#778CA3` |
+| SEWAGE_OVERFLOW    | `#26DE81` |
+| OTHER              | `#B0BEC5` |
 
 ---
 
@@ -121,182 +170,34 @@ Each of the 9 hazard types has a unique signature color defined in both `index.c
 
 The frontend is fully functional with mock data. To connect a real backend:
 
-### Step 1: Enable Lovable Cloud (Recommended)
+### Backend Reference Implementation (Mongo + Express)
 
-In Lovable, enable Cloud to get a managed backend with:
-- **PostgreSQL database** for incidents, sources, alerts
-- **Authentication** for admin login (email/password)
-- **Edge Functions** for NLP processing, alert dispatch
-- **Real-time subscriptions** for live incident updates
+The repository now ships with a minimal Express server (`server/index.ts`) that:
 
-### Step 2: Database Schema
+- Connects to the provided Mongo cluster via `MONGODB_URI`.
+- Normalizes raw documents into the shared `Incident` TypeScript model.
+- Supports search/date filters at the database layer and mirrors the frontend filter chips in memory (city, severity, status, hazard type).
+- Exposes `GET /api/incidents`, `GET /api/incidents/:id`, `PATCH /api/incidents/:id`, and `GET /api/trends` for analytics.
 
-Create these tables to replace mock data:
+### Backend Execution Steps
 
-```sql
--- Incidents table
-CREATE TABLE incidents (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL CHECK (type IN ('POTHOLE','WATERLOGGING','FALLEN_TREE','ROAD_COLLAPSE','CONSTRUCTION_ZONE','STRUCTURAL_FAILURE','DEBRIS','SEWAGE_OVERFLOW','OTHER')),
-  title TEXT NOT NULL,
-  description TEXT,
-  city TEXT NOT NULL,
-  location TEXT,
-  lat DOUBLE PRECISION,
-  lng DOUBLE PRECISION,
-  severity TEXT NOT NULL CHECK (severity IN ('CRITICAL','HIGH','MEDIUM','LOW')),
-  risk_score INTEGER DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'DETECTED' CHECK (status IN ('DETECTED','ALERTED','IN_PROGRESS','RESOLVED')),
-  source TEXT,
-  source_url TEXT,
-  raw_excerpt TEXT,
-  confidence_score INTEGER DEFAULT 0,
-  corroborating_reports INTEGER DEFAULT 0,
-  ai_summary TEXT,
-  assigned_to TEXT,
-  admin_notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  resolved_at TIMESTAMPTZ
-);
+1. Duplicate `.env.example` → `.env` and set the Mongo + Google Maps keys.
+2. Run `npm run api` to start the Express server on port `4000`.
+3. Hit `GET /` to verify the welcome payload, then `GET /api/incidents` to ensure documents serialize correctly.
+4. Use `PATCH /api/incidents/:id` (with a JSON body `{ "status": "IN_PROGRESS" }`) to confirm write permissions.
+5. Hit `GET /api/trends?range=30D` and ensure the payload matches the chart contracts (`daily`, `sourceDaily`, `cityStats`, `predictions`).
+6. Keep the API process running when launching the frontend so TanStack Query can hydrate with live data.
 
--- Timeline entries
-CREATE TABLE incident_timeline (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  incident_id TEXT REFERENCES incidents(id) ON DELETE CASCADE,
-  stage TEXT NOT NULL,
-  note TEXT,
-  admin_name TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+### Frontend Execution Steps
 
--- Data sources
-CREATE TABLE sources (
-  name TEXT PRIMARY KEY,
-  display_name TEXT NOT NULL,
-  reliability DOUBLE PRECISION DEFAULT 0,
-  total_reports INTEGER DEFAULT 0,
-  verified_reports INTEGER DEFAULT 0,
-  false_reports INTEGER DEFAULT 0,
-  status TEXT DEFAULT 'MONITORING',
-  trend JSONB DEFAULT '[]'
-);
+1. Ensure `VITE_API_BASE_URL` resolves to the running API (`http://localhost:4000/api`).
+2. Run `npm run dev` and open `http://localhost:8081`.
+3. Visit `/trends` to confirm the hazard trend, donut, city bar, and source charts render live data instead of mock values.
+4. On the public dashboard, use the City filter to select a single city and verify the Google Map auto-zooms to that area.
+5. Open `/admin` (or `/login` → admin) to check that the operations center shows the same live incidents and map state.
+6. Run `npm run build` when you need a production bundle that consumes the same API origin.
 
--- Alerts
-CREATE TABLE alerts (
-  id TEXT PRIMARY KEY,
-  subject TEXT NOT NULL,
-  incident_id TEXT REFERENCES incidents(id),
-  priority TEXT,
-  target_cities JSONB DEFAULT '[]',
-  message TEXT,
-  sent_by TEXT,
-  sent_at TIMESTAMPTZ DEFAULT NOW(),
-  status TEXT DEFAULT 'SENT'
-);
-
--- Activity log
-CREATE TABLE activity_log (
-  id TEXT PRIMARY KEY,
-  admin_name TEXT,
-  action TEXT NOT NULL,
-  incident_id TEXT REFERENCES incidents(id),
-  old_value TEXT,
-  new_value TEXT,
-  ip_address TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-### Step 3: Replace Mock Data with API Calls
-
-Each mock data file maps to a database table:
-
-| Mock File | Table | Context Hook |
-|-----------|-------|--------------|
-| `mockIncidents.ts` | `incidents` + `incident_timeline` | `FilterContext.tsx` |
-| `mockSources.ts` | `sources` | New `SourceContext` |
-| `mockAlerts.ts` | `alerts` | New `AlertContext` |
-| `mockActivityLog.ts` | `activity_log` | Admin pages |
-| `mockTrendData.ts` | Aggregation queries | `TrendsPage.tsx` |
-
-Example replacement in `FilterContext.tsx`:
-
-```tsx
-// Before (mock)
-import { mockIncidents } from '@/data/mockIncidents'
-const [incidents, setIncidents] = useState(mockIncidents)
-
-// After (Supabase via Lovable Cloud)
-import { supabase } from '@/integrations/supabase/client'
-
-const [incidents, setIncidents] = useState<Incident[]>([])
-
-useEffect(() => {
-  const fetchIncidents = async () => {
-    const { data } = await supabase
-      .from('incidents')
-      .select('*, incident_timeline(*)')
-      .order('created_at', { ascending: false })
-    if (data) setIncidents(transformToIncident(data))
-  }
-  fetchIncidents()
-
-  // Real-time subscription
-  const channel = supabase
-    .channel('incidents')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, fetchIncidents)
-    .subscribe()
-
-  return () => { supabase.removeChannel(channel) }
-}, [])
-```
-
-### Step 4: Authentication
-
-Replace `AuthContext.tsx` mock login with real auth:
-
-```tsx
-// Sign in
-const { data, error } = await supabase.auth.signInWithPassword({
-  email, password
-})
-
-// Sign out
-await supabase.auth.signOut()
-
-// Session listener
-supabase.auth.onAuthStateChange((event, session) => {
-  setUser(session?.user ?? null)
-})
-```
-
-### Step 5: Edge Functions for AI Features
-
-Create edge functions for:
-
-| Function | Purpose |
-|----------|---------|
-| `ingest-source` | Fetch & parse data from RSS/social feeds |
-| `classify-hazard` | NLP-based hazard type classification |
-| `compute-risk-score` | Calculate risk score from multiple signals |
-| `send-alert` | Dispatch alerts via email/SMS/webhook |
-| `generate-summary` | AI-powered incident summarization |
-
-### Step 6: Row Level Security (RLS)
-
-```sql
--- Public can read incidents
-CREATE POLICY "Public read" ON incidents FOR SELECT USING (true);
-
--- Only admins can modify
-CREATE POLICY "Admin write" ON incidents FOR ALL
-  USING (auth.jwt() ->> 'role' = 'admin');
-
--- Activity log: admin insert only
-CREATE POLICY "Admin log" ON activity_log FOR INSERT
-  WITH CHECK (auth.jwt() ->> 'role' = 'admin');
-```
+> You can still migrate to Supabase/Postgres later; replace the Express layer when ready.
 
 ---
 
@@ -335,21 +236,7 @@ CREATE POLICY "Admin log" ON activity_log FOR INSERT
 
 ## 📋 Environment Variables (for backend)
 
-When connecting to a backend, you'll need:
-
-```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-```
-
-For edge functions with external APIs:
-
-```env
-# Added as secrets in Lovable Cloud
-OPENAI_API_KEY=sk-...          # For AI summarization
-SENDGRID_API_KEY=SG...         # For email alerts
-TWILIO_AUTH_TOKEN=...          # For SMS alerts
-```
+When connecting to the provided Mongo API, you need the env vars listed earlier (`VITE_API_BASE_URL`, `MONGODB_URI`, etc.). Keep any sensitive keys out of source control.
 
 ---
 
@@ -361,18 +248,66 @@ npm run build       # Type-check + production build
 npm run lint        # ESLint
 ```
 
+## 🧑‍💻 Local Development Workflow
+
+1. Run `npm run api` in Terminal A and leave it running; it hot-reloads via `tsx` when you edit `server/*`.
+2. Run `npm run dev` in Terminal B for the Vite dev server (it chooses a free port automatically if 5173 is busy).
+3. Keep the browser pointed to `/` (public dashboard) and `/trends` to monitor live analytics updates while you work.
+4. When editing shared types in `src/types`, restart both processes so the server and client pick up the new contracts.
+5. Use `npm run test -- --watch` for rapid feedback when touching hooks/components; Vitest respects the same tsconfig.
+6. Before pushing, run `npm run lint && npm run test && npm run build` to ensure parity with CI.
+
+## 📝 Implementation Checklist (Feature Readiness)
+
+1. Live API reachable on `VITE_API_BASE_URL` with Mongo credentials configured.
+2. `/api/incidents` returns at least 100 recent documents spanning multiple cities/hazards.
+3. `/api/trends` responds for `7D`, `30D`, and `90D` ranges with realistic counts.
+4. Public dashboard stats, feed, and heatmap load without mock fallbacks; map auto-zooms when a single city filter is active.
+5. Trends page charts, city stats, and prediction cards reflect the live analytics payload.
+6. Admin dashboard map and queue mirror the same dataset and accept status updates via `PATCH /api/incidents/:id`.
+7. README/SETUP updated with any environment-specific notes from your deployment.
+8. Vitest suite (`npm run test`) and type check (`npm run build`) complete successfully before shipping.
+
+---
+
+## 🛠 Troubleshooting
+
+### MongoDB Atlas TLS errors (e.g., `ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR`)
+
+1. Ensure your current public IP is in the Atlas **Network Access** list (Project → Network Access → Add IP Address).
+2. Verify credentials with `mongosh "<MONGODB_URI>" --tls --tlsCAFile <atlas-ca.pem>`; download the CA file from Atlas → **Connect → Drivers**.
+3. Upgrade to Node.js 18+ so the bundled OpenSSL supports TLS 1.2 (required by Atlas). Temporarily you can run `set NODE_OPTIONS=--openssl-legacy-provider`, but upgrading is the recommended fix.
+4. Double-check the SRV URI includes your database name (e.g., `...mongodb.net/civic_hazard_db?retryWrites=true&w=majority`).
+5. If you still see `ReplicaSetNoPrimary`, confirm the cluster is healthy in Atlas and that no VPC firewall is blocking port 27017.
+
+### Google Maps not rendering
+
+1. Confirm `VITE_GOOGLE_MAPS_API_KEY` exists in `.env` and has the **Maps JavaScript API** enabled.
+2. Restrict the key to `http://localhost:*` (dev) and your production origins, then wait a few minutes for propagation.
+3. If you see `RefererNotAllowedMapError`, re-check the HTTP referrer list in Google Cloud Console → APIs & Services → Credentials.
+
+### Dev server port already in use
+
+1. Vite will auto-select another port (see console output). If you want to pin it, run `npm run dev -- --port=5174`.
+2. Stop lingering Node/Vite processes via Task Manager (Windows) or `lsof -i :5173` (macOS/Linux) + `kill`.
+
+### “Mock data” showing after connecting the API
+
+1. Verify `VITE_API_BASE_URL` starts with `http://localhost:4000/api` (or your deployed origin) and restart `npm run dev` after editing `.env`.
+2. Check the browser network tab: frontend calls should hit `/api/*` and receive 200 responses; otherwise, inspect CORS or proxy issues.
+
 ---
 
 ## 📦 Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | React 18 + TypeScript |
-| Build | Vite |
-| Styling | Tailwind CSS + CSS Variables |
-| Components | shadcn/ui |
-| Charts | Recharts |
-| Icons | Lucide React |
-| Routing | React Router DOM v6 |
-| State | React Context + useMemo/useCallback |
-| Backend (optional) | Lovable Cloud (PostgreSQL + Auth + Edge Functions) |
+| Layer      | Technology                                              |
+| ---------- | ------------------------------------------------------- |
+| Framework  | React 18 + TypeScript                                   |
+| Build      | Vite                                                    |
+| Styling    | Tailwind CSS + CSS Variables                            |
+| Components | shadcn/ui                                               |
+| Charts     | Recharts                                                |
+| Icons      | Lucide React                                            |
+| Routing    | React Router DOM v6                                     |
+| State      | React Context + useMemo/useCallback                     |
+| Backend    | Express + MongoDB Atlas (can be swapped for your stack) |

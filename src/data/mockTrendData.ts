@@ -1,4 +1,4 @@
-import type { HazardType } from '@/types'
+import type { HazardType, TrendAnalyticsResponse } from '@/types'
 
 const hazardTypes: HazardType[] = ['POTHOLE', 'WATERLOGGING', 'FALLEN_TREE', 'ROAD_COLLAPSE', 'CONSTRUCTION_ZONE', 'STRUCTURAL_FAILURE', 'DEBRIS', 'SEWAGE_OVERFLOW', 'OTHER']
 
@@ -6,7 +6,7 @@ function generateDailyData(base: number, variance: number): number[] {
   return Array.from({ length: 30 }, () => Math.max(0, Math.round(base + (Math.random() - 0.5) * 2 * variance)))
 }
 
-export const mockTrendData = {
+export const mockTrendData: TrendAnalyticsResponse = {
   daily: Array.from({ length: 30 }, (_, i) => {
     const date = new Date(2024, 0, i + 1)
     const entry: Record<string, string | number> = {

@@ -11,7 +11,10 @@ import { Button } from '@/components/ui/button'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '@/hooks/use-toast'
 import { ChevronDown, ChevronUp, Eye, Search } from 'lucide-react'
-import type { Incident, Status } from '@/types'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { adminApi } from '@/lib/adminApi'
+import { queryKeys } from '@/lib/queryKeys'
+import type { AdminBulkUpdateResponse, Incident, Status } from '@/types'
 
 type SortKey = 'id' | 'city' | 'severity' | 'status' | 'riskScore' | 'createdAt'
 type SortDir = 'asc' | 'desc'
@@ -19,15 +22,31 @@ type SortDir = 'asc' | 'desc'
 const SEV_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
 
 export default function IncidentManagement() {
-  const { filteredIncidents, updateIncident } = useFilters()
+  const { filteredIncidents } = useFilters()
   const { role } = useAuth()
   const navigate = useNavigate()
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('riskScore')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  const invalidateIncidentQueries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.incidents.all }).catch(() => {})
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.incidents() }).catch(() => {})
+  }, [queryClient])
+
+  const singleUpdateMutation = useMutation<Incident, Error, { id: string; status: Status }>({
+    mutationFn: ({ id, status }) => adminApi.updateIncident(id, { status }),
+    onSuccess: invalidateIncidentQueries,
+  })
+
+  const bulkUpdateMutation = useMutation<AdminBulkUpdateResponse, Error, { ids: string[]; status: Status }>({
+    mutationFn: ({ ids, status }) => adminApi.bulkUpdateIncidents(ids, { status }),
+    onSuccess: invalidateIncidentQueries,
+  })
 
   const handleSort = useCallback((key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -51,16 +70,51 @@ export default function IncidentManagement() {
     return list
   }, [filteredIncidents, search, sortKey, sortDir])
 
-  const handleStatusChange = useCallback((id: string, status: Status) => {
-    updateIncident(id, { status, updatedAt: new Date().toISOString() })
-    toast({ title: '✓ Incident updated successfully', description: `${id} → ${status}` })
-  }, [updateIncident, toast])
+  const handleStatusChange = useCallback(async (id: string, status: Status) => {
+    try {
+      await singleUpdateMutation.mutateAsync({ id, status })
+      toast({ title: '✓ Incident updated successfully', description: `${id} → ${status}` })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to update incident'
+      toast({ title: 'Update failed', description: message, variant: 'destructive' })
+    }
+  }, [singleUpdateMutation, toast])
 
   const toggleSelect = (id: string) => setSelected(prev => {
     const next = new Set(prev)
-    next.has(id) ? next.delete(id) : next.add(id)
+    if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
     return next
   })
+
+  const handleBulkUpdate = useCallback(async (status: Status) => {
+    const ids = Array.from(selected)
+    if (!ids.length) return
+    try {
+      const result = await bulkUpdateMutation.mutateAsync({ ids, status })
+      const failed = result.errors.length
+      if (failed) {
+        const failedList = result.errors
+          .slice(0, 3)
+          .map(error => error.id)
+          .join(', ')
+        toast({
+          title: 'Bulk update partially applied',
+          description: `${result.updated}/${ids.length} succeeded. Failed: ${failedList}${failed > 3 ? '…' : ''}`,
+          variant: 'destructive',
+        })
+      } else {
+        toast({ title: 'Bulk update complete', description: `${result.updated} incidents → ${status}` })
+      }
+      setSelected(new Set())
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Bulk update failed'
+      toast({ title: 'Bulk update error', description: message, variant: 'destructive' })
+    }
+  }, [selected, bulkUpdateMutation, toast])
 
   const SortIcon = ({ col }: { col: SortKey }) => {
     if (sortKey !== col) return null
@@ -131,6 +185,7 @@ export default function IncidentManagement() {
                             value={inc.status}
                             onChange={e => handleStatusChange(inc.id, e.target.value as Status)}
                             className="rounded bg-secondary px-1 py-0.5 text-[10px] text-foreground border border-border"
+                            disabled={singleUpdateMutation.isPending || bulkUpdateMutation.isPending}
                           >
                             <option value="DETECTED">DETECTED</option>
                             <option value="ALERTED">ALERTED</option>
@@ -167,14 +222,23 @@ export default function IncidentManagement() {
         <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card px-6 py-3 flex items-center justify-between animate-slide-up">
           <span className="text-sm font-semibold text-foreground">{selected.size} incidents selected</span>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => {
-              selected.forEach(id => handleStatusChange(id, 'IN_PROGRESS'))
-              setSelected(new Set())
-            }}>Mark In Progress</Button>
-            <Button size="sm" variant="outline" className="text-nazar-green border-nazar-green/30" onClick={() => {
-              selected.forEach(id => handleStatusChange(id, 'RESOLVED'))
-              setSelected(new Set())
-            }}>Resolve All</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={bulkUpdateMutation.isPending}
+              onClick={() => { void handleBulkUpdate('IN_PROGRESS') }}
+            >
+              Mark In Progress
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-nazar-green border-nazar-green/30"
+              disabled={bulkUpdateMutation.isPending}
+              onClick={() => { void handleBulkUpdate('RESOLVED') }}
+            >
+              Resolve All
+            </Button>
           </div>
         </div>
       )}

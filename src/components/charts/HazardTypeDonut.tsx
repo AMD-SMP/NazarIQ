@@ -1,21 +1,21 @@
-import React, { useMemo } from 'react'
+import React from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
-import { HAZARD_COLORS, HAZARD_LABELS } from '@/lib/constants'
-import { useFilters } from '@/context/FilterContext'
-import type { HazardType } from '@/types'
+import { ChartFallback } from '@/components/shared/ChartFallback'
 
-export const HazardTypeDonut = React.memo(function HazardTypeDonut() {
-  const { incidents } = useFilters()
+export interface HazardDonutDatum {
+  name: string
+  value: number
+  color: string
+}
 
-  const data = useMemo(() => {
-    const counts: Record<string, number> = {}
-    incidents.forEach(inc => { counts[inc.type] = (counts[inc.type] || 0) + 1 })
-    return Object.entries(counts).map(([type, count]) => ({
-      name: HAZARD_LABELS[type as HazardType],
-      value: count,
-      color: HAZARD_COLORS[type as HazardType],
-    }))
-  }, [incidents])
+interface HazardTypeDonutProps {
+  data: HazardDonutDatum[]
+}
+
+export const HazardTypeDonut = React.memo(function HazardTypeDonut({ data }: HazardTypeDonutProps) {
+  if (!data.length) {
+    return <ChartFallback message="No hazard distribution data" />
+  }
 
   return (
     <div className="h-[250px] w-full">

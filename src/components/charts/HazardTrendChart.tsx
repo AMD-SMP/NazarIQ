@@ -1,15 +1,27 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { mockTrendData } from '@/data/mockTrendData'
 import { HAZARD_COLORS, HAZARD_LABELS } from '@/lib/constants'
-import type { HazardType } from '@/types'
+import { ChartFallback } from '@/components/shared/ChartFallback'
+import type { HazardType, HazardTrendPoint } from '@/types'
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+type HazardTooltipEntry = {
+  dataKey: string
+  color: string
+  value: number
+}
+
+interface HazardTooltipProps {
+  active?: boolean
+  payload?: HazardTooltipEntry[]
+  label?: string
+}
+
+const CustomTooltip = ({ active, payload, label }: HazardTooltipProps) => {
   if (!active || !payload) return null
   return (
     <div className="glass-card rounded-lg p-3 text-xs">
       <p className="font-mono text-muted-foreground mb-1">{label}</p>
-      {payload.map((entry: any) => (
+      {payload.map((entry) => (
         <div key={entry.dataKey} className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
           <span className="text-foreground">{HAZARD_LABELS[entry.dataKey as HazardType]}: {entry.value}</span>
@@ -19,13 +31,22 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   )
 }
 
-export const HazardTrendChart = React.memo(function HazardTrendChart() {
-  const hazardTypes = Object.keys(HAZARD_COLORS) as HazardType[]
+interface HazardTrendChartProps {
+  data: HazardTrendPoint[]
+}
+
+export const HazardTrendChart = React.memo(function HazardTrendChart({ data }: HazardTrendChartProps) {
+  const hazardTypes = useMemo(() => Object.keys(HAZARD_COLORS) as HazardType[], [])
+  const trimmedData = useMemo(() => trimSparseTrendData(data, hazardTypes), [data, hazardTypes])
+
+  if (!trimmedData.length) {
+    return <ChartFallback message="No trend data available" />
+  }
 
   return (
     <div className="h-[300px] w-full">
       <ResponsiveContainer>
-        <LineChart data={mockTrendData.daily}>
+        <LineChart data={trimmedData}>
           <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={d => d.slice(5)} />
           <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
           <Tooltip content={<CustomTooltip />} />
@@ -38,3 +59,21 @@ export const HazardTrendChart = React.memo(function HazardTrendChart() {
     </div>
   )
 })
+
+function trimSparseTrendData(points: HazardTrendPoint[], keys: HazardType[]) {
+  if (!points.length) return []
+  const hasValueAt = (point: HazardTrendPoint) => keys.some(key => (point[key] ?? 0) > 0)
+  let start = points.findIndex(hasValueAt)
+  if (start === -1) return []
+  let end = points.length - 1
+  for (let idx = points.length - 1; idx >= 0; idx -= 1) {
+    if (hasValueAt(points[idx])) {
+      end = idx
+      break
+    }
+  }
+  if (start === 0 && end === points.length - 1) {
+    return points
+  }
+  return points.slice(start, end + 1)
+}
