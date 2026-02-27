@@ -1,16 +1,34 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { mockTrendData } from '@/data/mockTrendData'
+import { ChartFallback } from '@/components/shared/ChartFallback'
+import type { CityStatPoint } from '@/types'
 
-export const CityBarChart = React.memo(function CityBarChart() {
-  const sorted = [...mockTrendData.cityStats].sort((a, b) => b.count - a.count)
+interface CityBarChartProps {
+  data: CityStatPoint[]
+}
+
+export const CityBarChart = React.memo(function CityBarChart({ data }: CityBarChartProps) {
+  const prepared = useMemo(() => {
+    return [...data]
+      .filter(point => Number(point.count) > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8)
+  }, [data])
+
+  if (!prepared.length) {
+    return <ChartFallback message="No city stats available" />
+  }
+
+  const maxLabelLength = prepared.reduce((acc, point) => Math.max(acc, point.city.length), 0)
+  const dynamicHeight = Math.max(200, prepared.length * 42)
+  const yAxisWidth = Math.min(140, Math.max(80, maxLabelLength * 6))
 
   return (
-    <div className="h-[250px] w-full">
+    <div className="w-full" style={{ height: dynamicHeight }}>
       <ResponsiveContainer>
-        <BarChart data={sorted} layout="vertical">
-          <XAxis type="number" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
-          <YAxis type="category" dataKey="city" tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} width={80} />
+        <BarChart data={prepared} layout="vertical">
+          <XAxis type="number" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} domain={[0, 'dataMax']} />
+          <YAxis type="category" dataKey="city" tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} width={yAxisWidth} />
           <Tooltip
             content={({ active, payload }) => {
               if (!active || !payload?.[0]) return null

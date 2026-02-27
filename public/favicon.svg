@@ -1,0 +1,19 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NazarIQ Eye Favicon</title>
+  <desc id="desc">Minimal eye icon inspired by the NazarIQ logomark.</desc>
+  <defs>
+    <linearGradient id="outer" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E3A8A" />
+      <stop offset="100%" stop-color="#0F172A" />
+    </linearGradient>
+    <linearGradient id="iris" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60A5FA" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="#020617" />
+  <path d="M18 64c12-18 32-30 46-30s34 12 46 30c-12 18-32 30-46 30S30 82 18 64Z" fill="url(#outer)" />
+  <circle cx="64" cy="64" r="18" fill="url(#iris)" />
+  <circle cx="64" cy="64" r="9" fill="#0F172A" />
+  <circle cx="58" cy="58" r="5" fill="#E0F2FE" />
+</svg>

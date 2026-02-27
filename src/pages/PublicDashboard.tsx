@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { Eye, Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
+import { Eye, Activity, AlertTriangle, CheckCircle, Clock, AlertCircle } from 'lucide-react'
 import { useFilters } from '@/context/FilterContext'
 import { StatCard } from '@/components/shared/StatCard'
 import { IncidentCard } from '@/components/shared/IncidentCard'
@@ -7,13 +7,13 @@ import { MapSimulation } from '@/components/map/MapSimulation'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { useNavigate } from 'react-router-dom'
 import { CITIES, HAZARD_LABELS } from '@/lib/constants'
-import type { HazardType, Severity } from '@/types'
+import type { HazardType, Incident, Severity } from '@/types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 
 export default function PublicDashboard() {
-  const { filteredIncidents, incidents, filters, setFilter, resetFilters } = useFilters()
+  const { filteredIncidents, incidents, filters, setFilter, resetFilters, incidentsLoading, incidentsError, refetchIncidents } = useFilters()
   const navigate = useNavigate()
   const [sortBy, setSortBy] = useState<'newest' | 'critical' | 'risk'>('newest')
 
@@ -23,6 +23,14 @@ export default function PublicDashboard() {
     const resolved = incidents.filter(i => i.status === 'RESOLVED')
     return { active: active.length, critical: critical.length, resolved: resolved.length }
   }, [incidents])
+
+  const sparklineMetrics = useMemo(() => buildSparklineMetrics(incidents, 7), [incidents])
+  const { activeSeries, criticalSeries, resolvedSeries, resolutionSeries, avgResolutionHours } = sparklineMetrics
+
+  const activeTrend = useMemo(() => derivePercentTrend(activeSeries), [activeSeries])
+  const criticalTrend = useMemo(() => derivePercentTrend(criticalSeries), [criticalSeries])
+  const resolvedTrend = useMemo(() => derivePercentTrend(resolvedSeries), [resolvedSeries])
+  const resolutionTrend = useMemo(() => deriveResolutionTrend(resolutionSeries), [resolutionSeries])
 
   const sorted = useMemo(() => {
     const list = [...filteredIncidents]
@@ -36,6 +44,24 @@ export default function PublicDashboard() {
   }, [filteredIncidents, sortBy])
 
   const activeFilters = filters.cities.length + filters.severities.length + filters.hazardTypes.length + filters.statuses.length
+
+  const SkeletonCard = () => (
+    <div className="rounded-lg border border-border bg-card p-4 animate-pulse">
+      <div className="h-4 w-24 rounded bg-muted mb-3" />
+      <div className="h-6 w-16 rounded bg-muted" />
+    </div>
+  )
+
+  const FeedSkeleton = () => (
+    <>
+      {Array.from({ length: 5 }).map((_, idx) => (
+        <div key={idx} className="rounded-lg border border-border bg-card p-4 animate-pulse">
+          <div className="h-4 w-32 rounded bg-muted mb-2" />
+          <div className="h-3 w-full rounded bg-muted" />
+        </div>
+      ))}
+    </>
+  )
 
   return (
     <div className="min-h-screen bg-background">
@@ -70,11 +96,63 @@ export default function PublicDashboard() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
-        <StatCard title="Active Incidents" value={stats.active} icon={<Activity className="h-5 w-5" />} color="#2B7FFF" sparklineData={[12, 15, 18, 14, 20, 23, 19]} trend="up" trendValue="12%" />
-        <StatCard title="Critical Alerts" value={stats.critical} icon={<AlertTriangle className="h-5 w-5" />} color="#EF4444" sparklineData={[3, 5, 4, 6, 8, 6, 7]} trend="up" trendValue="8%" />
-        <StatCard title="Resolved" value={stats.resolved} icon={<CheckCircle className="h-5 w-5" />} color="#22C55E" sparklineData={[2, 3, 1, 4, 3, 5, 4]} trend="down" trendValue="5%" />
-        <StatCard title="Avg Resolution" value={18} subtitle="hours" icon={<Clock className="h-5 w-5" />} color="#06B6D4" sparklineData={[24, 20, 22, 18, 16, 19, 18]} trend="down" trendValue="3h" />
+        {incidentsLoading ? (
+          Array.from({ length: 4 }).map((_, idx) => <SkeletonCard key={idx} />)
+        ) : (
+          <>
+            <StatCard
+              title="Active Incidents"
+              value={stats.active}
+              icon={<Activity className="h-5 w-5" />}
+              color="#2B7FFF"
+              sparklineData={activeSeries}
+              trend={activeTrend.trend}
+              trendValue={activeTrend.trendValue}
+            />
+            <StatCard
+              title="Critical Alerts"
+              value={stats.critical}
+              icon={<AlertTriangle className="h-5 w-5" />}
+              color="#EF4444"
+              sparklineData={criticalSeries}
+              trend={criticalTrend.trend}
+              trendValue={criticalTrend.trendValue}
+            />
+            <StatCard
+              title="Resolved"
+              value={stats.resolved}
+              icon={<CheckCircle className="h-5 w-5" />}
+              color="#22C55E"
+              sparklineData={resolvedSeries}
+              trend={resolvedTrend.trend}
+              trendValue={resolvedTrend.trendValue}
+            />
+            <StatCard
+              title="Avg Resolution"
+              value={Math.round(avgResolutionHours)}
+              subtitle="hours"
+              icon={<Clock className="h-5 w-5" />}
+              color="#06B6D4"
+              sparklineData={resolutionSeries}
+              trend={resolutionTrend.trend}
+              trendValue={resolutionTrend.trendValue}
+            />
+          </>
+        )}
       </div>
+
+      {incidentsError && (
+        <div className="mx-4 mb-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-destructive" />
+            <div className="flex-1 text-sm text-destructive">
+              <p className="font-semibold">Failed to load latest incidents</p>
+              <p className="text-xs opacity-80">{incidentsError}</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => refetchIncidents()}>Retry</Button>
+          </div>
+        </div>
+      )}
 
       {/* Main layout */}
       <div className="flex flex-col lg:flex-row gap-4 p-4 pt-0">
@@ -128,7 +206,14 @@ export default function PublicDashboard() {
 
         {/* Map */}
         <div className="flex-1 min-h-[400px]">
-          <MapSimulation incidents={filteredIncidents} />
+          {incidentsLoading ? (
+            <div className="h-full w-full rounded-lg border border-border bg-muted/40 animate-pulse" />
+          ) : (
+            <MapSimulation
+              incidents={filteredIncidents}
+              focusCity={filters.cities.length === 1 ? filters.cities[0] : undefined}
+            />
+          )}
         </div>
 
         {/* Incident feed */}
@@ -149,12 +234,127 @@ export default function PublicDashboard() {
             ))}
           </div>
           <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
-            {sorted.length === 0 ? <EmptyState /> : sorted.slice(0, 12).map(inc => (
-              <IncidentCard key={inc.id} incident={inc} onClick={() => navigate(`/incident/${inc.id}`)} />
-            ))}
+            {incidentsLoading ? (
+              <FeedSkeleton />
+            ) : sorted.length === 0 ? (
+              <EmptyState />
+            ) : (
+              sorted.slice(0, 12).map(inc => (
+                <IncidentCard key={inc.id} incident={inc} onClick={() => navigate(`/incident/${inc.id}`)} />
+              ))
+            )}
           </div>
         </div>
       </div>
     </div>
   )
+}
+
+type TrendMeta = {
+  trend?: 'up' | 'down'
+  trendValue?: string
+}
+
+type SparklineMetrics = {
+  activeSeries: number[]
+  criticalSeries: number[]
+  resolvedSeries: number[]
+  resolutionSeries: number[]
+  avgResolutionHours: number
+}
+
+function buildSparklineMetrics(incidents: Incident[], days: number): SparklineMetrics {
+  const dateKeys = buildDateKeys(days)
+  const template = dateKeys.reduce<Record<string, { active: number; critical: number; resolved: number; durationTotal: number; durationCount: number }>>((acc, key) => {
+    acc[key] = { active: 0, critical: 0, resolved: 0, durationTotal: 0, durationCount: 0 }
+    return acc
+  }, {})
+
+  let totalResolutionHours = 0
+  let resolutionSamples = 0
+
+  incidents.forEach(incident => {
+    const createdKey = normalizeDateKey(incident.createdAt)
+    if (createdKey && template[createdKey]) {
+      if (incident.status !== 'RESOLVED') {
+        template[createdKey].active += 1
+      }
+      if (incident.severity === 'CRITICAL' && incident.status !== 'RESOLVED') {
+        template[createdKey].critical += 1
+      }
+    }
+
+    const resolvedKey = incident.resolvedAt ? normalizeDateKey(incident.resolvedAt) : null
+    if (incident.status === 'RESOLVED' && resolvedKey && template[resolvedKey]) {
+      template[resolvedKey].resolved += 1
+    }
+
+    if (incident.resolvedAt) {
+      const createdTime = Date.parse(incident.createdAt)
+      const resolvedTime = Date.parse(incident.resolvedAt)
+      const durationHours = (resolvedTime - createdTime) / 36e5
+      if (Number.isFinite(durationHours) && durationHours >= 0) {
+        totalResolutionHours += durationHours
+        resolutionSamples += 1
+        if (resolvedKey && template[resolvedKey]) {
+          template[resolvedKey].durationTotal += durationHours
+          template[resolvedKey].durationCount += 1
+        }
+      }
+    }
+  })
+
+  return {
+    activeSeries: dateKeys.map(key => template[key].active),
+    criticalSeries: dateKeys.map(key => template[key].critical),
+    resolvedSeries: dateKeys.map(key => template[key].resolved),
+    resolutionSeries: dateKeys.map(key => template[key].durationCount ? template[key].durationTotal / template[key].durationCount : 0),
+    avgResolutionHours: resolutionSamples ? totalResolutionHours / resolutionSamples : 0,
+  }
+}
+
+function buildDateKeys(days: number) {
+  const today = new Date()
+  const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()))
+  const keys: string[] = []
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(base)
+    date.setUTCDate(base.getUTCDate() - offset)
+    keys.push(date.toISOString().split('T')[0])
+  }
+  return keys
+}
+
+function normalizeDateKey(value?: string | null) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const normalized = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  return normalized.toISOString().split('T')[0]
+}
+
+function derivePercentTrend(series: number[]): TrendMeta {
+  if (!series?.length || series.length < 2) return {}
+  const first = series[0]
+  const last = series[series.length - 1]
+  if (first === last) return {}
+  const base = first === 0 ? Math.max(last, 1) : first
+  const change = ((last - first) / base) * 100
+  if (!Number.isFinite(change) || change === 0) return {}
+  return {
+    trend: last > first ? 'up' : 'down',
+    trendValue: `${Math.abs(change).toFixed(0)}%`,
+  }
+}
+
+function deriveResolutionTrend(series: number[]): TrendMeta {
+  if (!series?.length || series.length < 2) return {}
+  const first = series[0]
+  const last = series[series.length - 1]
+  const diff = last - first
+  if (Math.abs(diff) < 0.1) return {}
+  return {
+    trend: diff > 0 ? 'up' : 'down',
+    trendValue: `${Math.abs(diff).toFixed(1)}h`,
+  }
 }

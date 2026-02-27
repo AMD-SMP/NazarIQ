@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Eye, Bell, User, LogOut } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useThemeContext } from '@/context/ThemeContext'
@@ -9,6 +9,7 @@ export function Navbar() {
   const { isAuthenticated, role, userName, logout } = useAuth()
   const { theme, setTheme } = useThemeContext()
   const location = useLocation()
+  const navigate = useNavigate()
 
   const themes: { key: Theme; label: string; icon: string }[] = [
     { key: 'command', label: 'Command', icon: '🌑' },
@@ -72,9 +73,13 @@ export function Navbar() {
             </button>
           </div>
         ) : (
-          <Link to="/login" className="rounded bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity">
+          <button
+            type="button"
+            onClick={() => navigate('/login')}
+            className="rounded bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+          >
             Sign In
-          </Link>
+          </button>
         )}
       </div>
     </header>

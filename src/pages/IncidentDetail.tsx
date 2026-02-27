@@ -1,25 +1,63 @@
 import React from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useFilters } from '@/context/FilterContext'
 import { SeverityBadge } from '@/components/shared/SeverityBadge'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { HazardTypeBadge } from '@/components/shared/HazardTypeBadge'
 import { SourceBadge } from '@/components/shared/SourceBadge'
-import { RiskScoreBar } from '@/components/shared/RiskScoreBar'
 import { SEVERITY_COLORS, STATUS_COLORS } from '@/lib/constants'
-import { ArrowLeft, MapPin, Clock, User, FileText } from 'lucide-react'
+import { ArrowLeft, MapPin, Clock, User, FileText, Loader2, AlertCircle } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { incidentsApi } from '@/lib/incidentsApi'
+import { queryKeys } from '@/lib/queryKeys'
 
 export default function IncidentDetail() {
   const { id } = useParams<{ id: string }>()
-  const { incidents } = useFilters()
-  const incident = incidents.find(i => i.id === id)
+  const incidentId = id ?? ''
 
-  if (!incident) {
+  const {
+    data: incident,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: queryKeys.incidents.detail(incidentId),
+    queryFn: () => incidentsApi.detail(incidentId),
+    enabled: Boolean(incidentId),
+  })
+
+  if (!incidentId) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
-          <h2 className="text-lg font-semibold text-foreground">Incident not found</h2>
+          <h2 className="text-lg font-semibold text-foreground">Invalid incident reference</h2>
           <Link to="/" className="mt-2 text-sm text-primary hover:underline">← Back to Dashboard</Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Loading incident…
+        </div>
+      </div>
+    )
+  }
+
+  if (isError || !incident) {
+    const message = error instanceof Error ? error.message : 'Incident not found'
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="text-center">
+          <div className="mb-2 inline-flex items-center gap-2 text-destructive">
+            <AlertCircle className="h-5 w-5" />
+            <span className="font-semibold">Unable to load incident</span>
+          </div>
+          <p className="text-sm text-muted-foreground">{message}</p>
+          <Link to="/" className="mt-4 inline-flex text-sm text-primary hover:underline">← Back to Dashboard</Link>
         </div>
       </div>
     )

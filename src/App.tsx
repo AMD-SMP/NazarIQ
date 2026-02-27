@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { FilterProvider } from "@/context/FilterContext";
@@ -11,34 +11,53 @@ import PublicDashboard from "@/pages/PublicDashboard";
 import IncidentDetail from "@/pages/IncidentDetail";
 import TrendsPage from "@/pages/TrendsPage";
 import LoginPage from "@/pages/LoginPage";
+import SignupPage from "@/pages/SignupPage";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import IncidentManagement from "@/pages/admin/IncidentManagement";
 import NotFound from "@/pages/NotFound";
+import { AdminRoute } from "@/routes/AdminRoute";
 
 const queryClient = new QueryClient();
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, role } = useAuth();
-  if (!isAuthenticated) return <Navigate to="/login" />;
-  if (role !== 'admin') return <Navigate to="/" />;
-  return <>{children}</>;
+function ProtectedLayout() {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return <MainLayout />;
 }
 
-function AppLayout() {
+function MainLayout() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <Routes>
+      <div className="min-h-[calc(100vh-3rem)]">
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route element={<ProtectedLayout />}>
         <Route path="/" element={<PublicDashboard />} />
         <Route path="/incident/:id" element={<IncidentDetail />} />
         <Route path="/trends" element={<TrendsPage />} />
-        <Route path="/login" element={<LoginPage />} />
         <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         <Route path="/admin/incidents" element={<AdminRoute><IncidentManagement /></AdminRoute>} />
         <Route path="*" element={<NotFound />} />
-      </Routes>
-    </div>
+      </Route>
+      <Route path="/login" element={<LoginGate />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
+}
+
+function LoginGate() {
+  const { isAuthenticated } = useAuth();
+  if (isAuthenticated) return <Navigate to="/" replace />;
+  return <LoginPage />;
 }
 
 const App = () => (
@@ -50,7 +69,7 @@ const App = () => (
             <FilterProvider>
               <Toaster />
               <Sonner />
-              <AppLayout />
+              <AppRoutes />
             </FilterProvider>
           </AuthProvider>
         </BrowserRouter>

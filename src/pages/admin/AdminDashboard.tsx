@@ -1,17 +1,18 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { useAuth } from '@/context/AuthContext'
-import { useFilters } from '@/context/FilterContext'
 import { StatCard } from '@/components/shared/StatCard'
 import { IncidentCard } from '@/components/shared/IncidentCard'
 import { MapSimulation } from '@/components/map/MapSimulation'
 import { ResolutionGauge } from '@/components/charts/ResolutionGauge'
-import { mockActivityLog } from '@/data/mockActivityLog'
-import { mockAlerts } from '@/data/mockAlerts'
 import { Activity, AlertTriangle, Clock, CheckCircle, XCircle, Shield, Bell, X, ExternalLink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { STATUS_COLORS, SEVERITY_COLORS } from '@/lib/constants'
 import { SeverityBadge } from '@/components/shared/SeverityBadge'
 import { useToast } from '@/hooks/use-toast'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { adminApi } from '@/lib/adminApi'
+import { queryKeys } from '@/lib/queryKeys'
+import { incidentsApi } from '@/lib/incidentsApi'
+import type { Alert, ActivityLog, Incident } from '@/types'
 
 const ACTION_COLORS: Record<string, string> = {
   STATUS_CHANGE: '#2B7FFF',
@@ -21,32 +22,124 @@ const ACTION_COLORS: Record<string, string> = {
   RESOLVED: '#22C55E',
 }
 
+const ACTION_LABELS: Record<ActivityLog['action'], string> = {
+  STATUS_CHANGE: 'Status Change',
+  NOTE_ADDED: 'Note Added',
+  ALERT_SENT: 'Alert Sent',
+  ESCALATED: 'Escalated',
+  RESOLVED: 'Resolved',
+}
+
+const ACTIVITY_RANGES = ['7D', '30D', '90D'] as const
+
+type AlertsCacheContext = {
+  previousAlerts?: Alert[]
+}
+
+const EMPTY_INCIDENTS: Incident[] = []
+
 function formatTimestamp(ts: string) {
   const d = new Date(ts)
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
+function formatActionLabel(action: ActivityLog['action']) {
+  return ACTION_LABELS[action] ?? action.split('_').map(token => token[0]?.toUpperCase() + token.slice(1).toLowerCase()).join(' ')
+}
+
+function summarizeActivityChange(log: ActivityLog) {
+  if (log.oldValue && log.oldValue !== 'N/A' && log.oldValue !== log.newValue) {
+    return `${log.oldValue} → ${log.newValue}`
+  }
+  return log.newValue
+}
+
 export default function AdminDashboard() {
   const { userName } = useAuth()
-  const { incidents, filteredIncidents } = useFilters()
   const navigate = useNavigate()
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const [clock, setClock] = useState(new Date())
   const [showNotifications, setShowNotifications] = useState(false)
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
+  const [activityRange, setActivityRange] = useState<typeof ACTIVITY_RANGES[number]>('30D')
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  const alerts = useMemo(() => mockAlerts.filter(a => !dismissedIds.has(a.id)), [dismissedIds])
-  const unreadCount = useMemo(() => alerts.filter(a => a.status === 'SENT' || a.status === 'DELIVERED').length, [alerts])
+  const { data: alertsData = [], isLoading: alertsLoading, isError: alertsError } = useQuery({
+    queryKey: queryKeys.admin.alerts(),
+    queryFn: () => adminApi.alerts(),
+  })
 
-  const dismissAlert = useCallback((id: string) => {
-    setDismissedIds(prev => new Set(prev).add(id))
-    toast({ title: '✓ Notification dismissed' })
-  }, [toast])
+  const { data: activityData = [], isLoading: activityLoading, isError: activityError } = useQuery({
+    queryKey: queryKeys.admin.activity(activityRange),
+    queryFn: () => adminApi.activity(activityRange),
+    refetchInterval: 45000,
+  })
+
+  const {
+    data: incidentsData,
+    isLoading: incidentsLoading,
+    isError: incidentsError,
+    error: incidentsErrorObj,
+  } = useQuery({
+    queryKey: queryKeys.admin.incidents(),
+    queryFn: () => incidentsApi.list(),
+    refetchInterval: 15000,
+  })
+
+  const incidents: Incident[] = incidentsData?.data ?? EMPTY_INCIDENTS
+  const incidentsErrorMessage = incidentsError ? (incidentsErrorObj as Error)?.message ?? 'Failed to load incidents' : null
+  const recentActivity = activityData.slice(0, 10)
+  const showActivityEmpty = !activityLoading && !activityError && recentActivity.length === 0
+
+  const markAlertReadMutation = useMutation<Alert, Error, string, AlertsCacheContext>({
+    mutationFn: (id: string) => adminApi.markAlertRead(id),
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.admin.alerts() })
+      const previousAlerts = queryClient.getQueryData<Alert[]>(queryKeys.admin.alerts())
+      queryClient.setQueryData<Alert[]>(queryKeys.admin.alerts(), current =>
+        (current ?? []).map(alert => alert.id === id ? { ...alert, status: 'ACKNOWLEDGED' } : alert),
+      )
+      return { previousAlerts }
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previousAlerts) {
+        queryClient.setQueryData(queryKeys.admin.alerts(), context.previousAlerts)
+      }
+      toast({ title: 'Failed to mark notification read', variant: 'destructive' })
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.alerts() })
+    },
+  })
+
+  const dismissAlertMutation = useMutation<void, Error, string, AlertsCacheContext>({
+    mutationFn: (id: string) => adminApi.dismissAlert(id),
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.admin.alerts() })
+      const previousAlerts = queryClient.getQueryData<Alert[]>(queryKeys.admin.alerts())
+      queryClient.setQueryData<Alert[]>(queryKeys.admin.alerts(), current =>
+        (current ?? []).filter(alert => alert.id !== id),
+      )
+      return { previousAlerts }
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previousAlerts) {
+        queryClient.setQueryData(queryKeys.admin.alerts(), context.previousAlerts)
+      }
+      toast({ title: 'Failed to dismiss notification', variant: 'destructive' })
+    },
+    onSuccess: () => toast({ title: '✓ Notification dismissed' }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.alerts() })
+    },
+  })
+
+  const alerts = alertsData
+  const unreadCount = useMemo(() => alerts.filter(a => a.status === 'SENT' || a.status === 'DELIVERED').length, [alerts])
 
   const stats = useMemo(() => {
     const active = incidents.filter(i => i.status !== 'RESOLVED')
@@ -106,7 +199,11 @@ export default function AdminDashboard() {
                   </button>
                 </div>
                 <div className="overflow-y-auto max-h-[440px] divide-y divide-border">
-                  {alerts.length === 0 ? (
+                  {alertsLoading ? (
+                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading...</div>
+                  ) : alertsError ? (
+                    <div className="px-4 py-8 text-center text-sm text-destructive">Failed to load alerts</div>
+                  ) : alerts.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm text-muted-foreground">No notifications</div>
                   ) : (
                     alerts.map(alert => (
@@ -139,14 +236,20 @@ export default function AdminDashboard() {
                           </div>
                           <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                             <button
-                              onClick={() => navigate(`/incident/${alert.incidentId}`)}
+                              onClick={() => {
+                                if (alert.status !== 'ACKNOWLEDGED') {
+                                  markAlertReadMutation.mutate(alert.id)
+                                }
+                                navigate(`/incident/${alert.incidentId}`)
+                              }}
                               className="rounded p-1 hover:bg-primary/10 transition-colors"
                               title="View incident"
                             >
                               <ExternalLink className="h-3.5 w-3.5 text-primary" />
                             </button>
                             <button
-                              onClick={() => dismissAlert(alert.id)}
+                              onClick={() => dismissAlertMutation.mutate(alert.id)}
+                              disabled={dismissAlertMutation.isPending && dismissAlertMutation.variables === alert.id}
                               className="rounded p-1 hover:bg-destructive/10 transition-colors"
                               title="Dismiss"
                             >
@@ -166,11 +269,19 @@ export default function AdminDashboard() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 p-4">
-        <StatCard title="Active" value={stats.active} icon={<Activity className="h-5 w-5" />} color="#2B7FFF" />
-        <StatCard title="Critical" value={stats.critical} icon={<AlertTriangle className="h-5 w-5" />} color="#EF4444" />
-        <StatCard title="In Progress" value={stats.inProgress} icon={<Clock className="h-5 w-5" />} color="#A855F7" />
-        <StatCard title="Resolved Today" value={stats.resolved} icon={<CheckCircle className="h-5 w-5" />} color="#22C55E" />
-        <StatCard title="False Reports" value={stats.falseReports} icon={<XCircle className="h-5 w-5" />} color="#778CA3" />
+        {incidentsLoading ? (
+          Array.from({ length: 5 }).map((_, idx) => (
+            <div key={idx} className="rounded-lg border border-border bg-muted/30 p-4 animate-pulse h-24" />
+          ))
+        ) : (
+          <>
+            <StatCard title="Active" value={stats.active} icon={<Activity className="h-5 w-5" />} color="#2B7FFF" />
+            <StatCard title="Critical" value={stats.critical} icon={<AlertTriangle className="h-5 w-5" />} color="#EF4444" />
+            <StatCard title="In Progress" value={stats.inProgress} icon={<Clock className="h-5 w-5" />} color="#A855F7" />
+            <StatCard title="Resolved Today" value={stats.resolved} icon={<CheckCircle className="h-5 w-5" />} color="#22C55E" />
+            <StatCard title="False Reports" value={stats.falseReports} icon={<XCircle className="h-5 w-5" />} color="#778CA3" />
+          </>
+        )}
       </div>
 
       {/* War room */}
@@ -179,15 +290,31 @@ export default function AdminDashboard() {
         <div className="w-full lg:w-80 shrink-0">
           <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Priority Queue</h3>
           <div className="space-y-2 max-h-[500px] overflow-y-auto">
-            {priorityQueue.map(inc => (
-              <IncidentCard key={inc.id} incident={inc} onClick={() => navigate(`/incident/${inc.id}`)} />
-            ))}
+            {incidentsLoading ? (
+              Array.from({ length: 5 }).map((_, idx) => (
+                <div key={idx} className="h-24 rounded-lg border border-border bg-muted/30 animate-pulse" />
+              ))
+            ) : incidentsError ? (
+              <div className="rounded border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">{incidentsErrorMessage}</div>
+            ) : priorityQueue.length === 0 ? (
+              <div className="text-xs text-muted-foreground">All clear. No critical incidents in queue.</div>
+            ) : (
+              priorityQueue.map(inc => (
+                <IncidentCard key={inc.id} incident={inc} onClick={() => navigate(`/incident/${inc.id}`)} />
+              ))
+            )}
           </div>
         </div>
 
         {/* Map */}
         <div className="flex-1 min-h-[400px]">
-          <MapSimulation incidents={filteredIncidents} />
+          {incidentsLoading ? (
+            <div className="h-full w-full rounded-lg border border-border bg-muted/30 animate-pulse" />
+          ) : incidentsError ? (
+            <div className="h-full w-full rounded-lg border border-destructive/30 bg-destructive/5 flex items-center justify-center text-sm text-destructive">{incidentsErrorMessage}</div>
+          ) : (
+            <MapSimulation incidents={incidents} />
+          )}
         </div>
 
         {/* Right sidebar */}
@@ -198,17 +325,59 @@ export default function AdminDashboard() {
           </div>
 
           <div className="rounded-lg border border-border bg-card p-4">
-            <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Recent Activity</h3>
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
-              {mockActivityLog.slice(0, 8).map(log => (
-                <div key={log.id} className="flex items-start gap-2 text-xs" style={{ borderLeft: `2px solid ${ACTION_COLORS[log.action] || '#666'}`, paddingLeft: 8 }}>
-                  <div>
-                    <p className="text-foreground font-medium">{log.adminName}</p>
-                    <p className="text-muted-foreground">{log.action.replace('_', ' ')} on {log.incidentId}</p>
-                    <p className="font-mono text-[10px] text-muted-foreground">{formatTimestamp(log.timestamp)}</p>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Recent Activity</h3>
+              <div className="flex items-center gap-1 rounded-full border border-border px-1 py-0.5 text-[9px] font-semibold uppercase tracking-widest">
+                {ACTIVITY_RANGES.map(range => (
+                  <button
+                    key={range}
+                    onClick={() => setActivityRange(range)}
+                    className={`rounded-full px-1.5 py-0.5 transition-colors ${activityRange === range ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {range}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+              {activityLoading ? (
+                <div className="text-xs text-muted-foreground">Loading activity...</div>
+              ) : activityError ? (
+                <div className="text-xs text-destructive">Failed to load activity</div>
+              ) : showActivityEmpty ? (
+                <div className="text-xs text-muted-foreground">No activity during this window</div>
+              ) : (
+                recentActivity.map((log: ActivityLog) => (
+                  <div
+                    key={log.id}
+                    className="rounded-md border border-border/60 bg-background/60 p-3 text-xs shadow-sm"
+                    style={{ borderLeft: `3px solid ${ACTION_COLORS[log.action] || '#666'}` }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-foreground font-semibold">{log.adminName}</p>
+                        <p className="text-muted-foreground truncate">{summarizeActivityChange(log)}</p>
+                        <p className="font-mono text-[10px] text-muted-foreground mt-1">{log.incidentId}</p>
+                      </div>
+                      <span
+                        className="rounded-full bg-secondary px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest"
+                        style={{ color: ACTION_COLORS[log.action] || 'hsl(var(--primary))' }}
+                      >
+                        {formatActionLabel(log.action)}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span className="font-mono">{formatTimestamp(log.timestamp)}</span>
+                      <button
+                        onClick={() => navigate(`/incident/${log.incidentId}`)}
+                        className="text-primary font-semibold hover:underline"
+                      >
+                        View
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>

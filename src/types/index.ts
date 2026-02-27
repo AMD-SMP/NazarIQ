@@ -92,3 +92,82 @@ export interface Alert {
   sentAt: string
   status: 'SENT' | 'DELIVERED' | 'ACKNOWLEDGED' | 'FAILED'
 }
+
+export interface ApiErrorResponse {
+  message: string
+  code?: string
+  details?: string
+}
+
+export interface ApiListResponse<T> {
+  data: T[]
+  total?: number
+  page?: number
+  pageSize?: number
+}
+
+export type IncidentApiFilters = {
+  search?: string
+  cities?: string[]
+  severities?: Severity[]
+  statuses?: Status[]
+  hazardTypes?: HazardType[]
+  dateRange?: '7D' | '30D' | '90D'
+}
+
+export interface IncidentUpdateRequest {
+  status?: Status
+  adminNotes?: string
+  assignedTo?: string
+}
+
+export interface AdminBulkUpdateResponse {
+  data: Incident[]
+  updated: number
+  errors: Array<{ id: string; message: string }>
+}
+
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface AuthUser {
+  id: string
+  name: string
+  email: string
+  role: UserRole
+}
+
+export interface LoginResponse {
+  token: string
+  refreshToken?: string
+  user: AuthUser
+}
+
+export type HazardTrendPoint = {
+  date: string
+} & Record<HazardType, number>
+
+export type SourceActivityPoint = {
+  date: string
+} & Record<SourceName, number>
+
+export interface CityStatPoint {
+  city: string
+  count: number
+  critical: number
+}
+
+export interface PredictionPoint {
+  city: string
+  risk: number
+  reason: string
+}
+
+export interface TrendAnalyticsResponse {
+  daily: HazardTrendPoint[]
+  sourceDaily: SourceActivityPoint[]
+  cityStats: CityStatPoint[]
+  predictions: PredictionPoint[]
+}

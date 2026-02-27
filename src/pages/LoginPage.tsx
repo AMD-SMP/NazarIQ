@@ -1,17 +1,50 @@
-import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useForm } from 'react-hook-form'
+import { z } from 'zod'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
+
+const loginSchema = z.object({
+  email: z.string().email('Enter a valid email address'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  role: z.enum(['public', 'admin'], { required_error: 'Please pick an access role' }),
+})
+
+type LoginValues = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { loginWithCredentials } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const signupEmail = (location.state as { email?: string } | null)?.email ?? ''
+  const [formError, setFormError] = useState<string | null>(null)
+  const form = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '', role: 'public' },
+  })
 
-  const handleLogin = (role: 'public' | 'admin') => {
-    login(role)
-    navigate(role === 'admin' ? '/admin' : '/')
+  useEffect(() => {
+    if (signupEmail) {
+      form.setValue('email', signupEmail)
+      form.setFocus('password')
+    }
+  }, [signupEmail, form])
+
+  const handleCredentialLogin = async (values: LoginValues) => {
+    setFormError(null)
+    try {
+      const role = await loginWithCredentials(values)
+      navigate(role === 'admin' ? '/admin' : '/')
+    } catch (error) {
+      console.error(error)
+      const message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.'
+      setFormError(message)
+    }
   }
 
   return (
@@ -53,29 +86,69 @@ export default function LoginPage() {
             <p className="text-sm text-muted-foreground mt-1">Access the NazarIQ intelligence platform</p>
           </div>
 
-          <div className="space-y-3">
-            <Input placeholder="Email" type="email" className="h-10" />
-            <Input placeholder="Password" type="password" className="h-10" />
-            <Button className="w-full h-10 font-semibold" onClick={() => handleLogin('admin')}>
-              Sign In
-            </Button>
-          </div>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border" /></div>
-            <div className="relative flex justify-center text-[10px] uppercase tracking-widest">
-              <span className="bg-background px-3 text-muted-foreground">Quick Demo Access</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Button variant="outline" className="h-10 text-xs font-semibold" onClick={() => handleLogin('public')}>
-              Enter as Public
-            </Button>
-            <Button className="h-10 text-xs font-semibold" onClick={() => handleLogin('admin')}>
-              Enter as Admin
-            </Button>
-          </div>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleCredentialLogin)} className="space-y-3">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs uppercase tracking-widest text-muted-foreground">Email</FormLabel>
+                    <FormControl>
+                      <Input placeholder="you@nazariq.gov.in" type="email" className="h-10" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs uppercase tracking-widest text-muted-foreground">Password</FormLabel>
+                    <FormControl>
+                      <Input placeholder="••••••••" type="password" className="h-10" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs uppercase tracking-widest text-muted-foreground">Access Role</FormLabel>
+                    <div className="flex gap-2">
+                      {(['public', 'admin'] as const).map(option => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => field.onChange(option)}
+                          className={`flex-1 rounded border px-3 py-2 text-xs font-semibold uppercase tracking-widest transition-colors ${
+                            field.value === option
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {option === 'public' ? 'Public' : 'Admin'}
+                        </button>
+                      ))}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {formError && <p className="text-xs font-medium text-destructive">{formError}</p>}
+              <Button className="w-full h-10 font-semibold" type="submit" disabled={form.formState.isSubmitting}>
+                {form.formState.isSubmitting ? 'Signing In...' : 'Sign In'}
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">
+                Need an account? <Link to="/signup" className="text-primary hover:underline">Create one</Link>
+              </p>
+            </form>
+          </Form>
 
           <p className="text-center text-[10px] text-muted-foreground">Secured by NazarIQ Intelligence Layer</p>
         </div>
