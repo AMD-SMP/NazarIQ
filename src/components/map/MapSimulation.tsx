@@ -14,6 +14,16 @@ import { useLiveIncidents } from '@/hooks/useLiveIncidents'
 import { useThemeContext } from '@/context/ThemeContext'
 import { CITY_COORDS } from '@/lib/constants'
 
+/**
+ * Zoom-Adaptive Rendering Overview
+ *
+ * Static heatmap radii and fixed-size clusters exaggerate density when users zoom out.
+ * Scaling the radius/opacity inversely with zoom keeps heat signatures proportional,
+ * while clamping prevents extreme bloom artifacts. All Google Maps objects are
+ * instantiated once; zoom listeners update their properties via refs + rAF to avoid
+ * unnecessary React re-renders.
+ */
+
 type MapStyleMode = 'light' | 'dark'
 
 interface Props {
@@ -31,6 +41,8 @@ const HEATMAP_GRADIENT = [
   'rgba(255,165,0,1)',
   'rgba(255,0,0,1)',
 ]
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
 const SEVERITY_WEIGHTS: Record<Severity, number> = {
   CRITICAL: 4,
@@ -126,7 +138,13 @@ const LIGHT_MAP_STYLE: google.maps.MapTypeStyle[] = [
 
 const ENABLE_LIVE_FEED = true
 const HEATMAP_RADIUS = 35
-const HEATMAP_OPACITY = 0.7
+const HEATMAP_RADIUS_MIN = 15
+const HEATMAP_RADIUS_MAX = 50
+const HEATMAP_OPACITY_BASE = 0.4
+const HEATMAP_OPACITY_MAX = 0.85
+const ZOOM_BASELINE = 14
+const DENSITY_DISABLE_ZOOM = 6
+const CLUSTER_DETAIL_ZOOM = 12
 
 type HeatPointSeed = { lat: number; lng: number; weight: number }
 
@@ -310,6 +328,80 @@ const ClusteredMarkers: React.FC<ClusteredMarkersProps> = ({ incidents, onMarker
   const clusterRef = useRef<MarkerClusterer | null>(null)
   const markersRef = useRef<google.maps.Marker[]>([])
   const animationTimersRef = useRef<number[]>([])
+  const zoomRef = useRef<number>(5)
+  const zoomRafRef = useRef<number | null>(null)
+  const zoomListenerRef = useRef<google.maps.MapsEventListener | null>(null)
+  const densityModeRef = useRef<'clusters' | 'markers'>('clusters')
+  const googleMapsRef = useRef<typeof google | null>(null)
+
+  const applyMarkerIcon = useCallback((marker: google.maps.Marker, severity: Severity, zoom: number) => {
+    const googleMaps = googleMapsRef.current
+    if (!googleMaps) return
+    const color = SEVERITY_COLOR_MAP[severity] ?? '#94a3b8'
+    const isCritical = severity === 'CRITICAL'
+    const zoomFactor = clamp((zoom || ZOOM_BASELINE) / ZOOM_BASELINE, 0.7, 1.4)
+    const baseScale = isCritical ? 9 : 7
+    const scale = clamp(baseScale * zoomFactor, isCritical ? 8 : 5, isCritical ? 18 : 11)
+    const lowZoom = zoom < 8
+
+    const icon: google.maps.Symbol = {
+      path: googleMaps.maps.SymbolPath.CIRCLE,
+      scale,
+      fillColor: color,
+      fillOpacity: isCritical && lowZoom ? 0.8 : 0.95,
+      strokeColor: isCritical ? '#fde68a' : '#0f172a',
+      strokeOpacity: isCritical && lowZoom ? 0.35 : 0.85,
+      strokeWeight: isCritical ? (lowZoom ? 1.2 : 2.4) : 1.2,
+    }
+
+    marker.setIcon(icon)
+  }, [])
+
+  const syncDensityMode = useCallback((zoom: number) => {
+    if (!map || !clusterRef.current) return
+    const preferIndividualMarkers = zoom > CLUSTER_DETAIL_ZOOM
+
+    if (preferIndividualMarkers && densityModeRef.current !== 'markers') {
+      densityModeRef.current = 'markers'
+      clusterRef.current.setMap(null)
+      markersRef.current.forEach(marker => marker.setMap(map))
+    } else if (!preferIndividualMarkers && densityModeRef.current !== 'clusters') {
+      densityModeRef.current = 'clusters'
+      markersRef.current.forEach(marker => marker.setMap(null))
+      clusterRef.current.setMap(map)
+      clusterRef.current.render()
+    }
+  }, [map])
+
+  const handleZoomUpdate = useCallback(() => {
+    if (!map) return
+    const googleMaps = googleMapsRef.current
+    if (!googleMaps) return
+    const zoom = map.getZoom() ?? zoomRef.current
+    zoomRef.current = zoom
+
+    markersRef.current.forEach((marker) => {
+      const meta = marker.get('incidentMeta') as { severity: Severity } | undefined
+      if (!meta) return
+      applyMarkerIcon(marker, meta.severity, zoom)
+
+      if (meta.severity === 'CRITICAL') {
+        if (zoom < 10) {
+          marker.setAnimation(null)
+        } else if (!marker.get('isZoomBouncing')) {
+          marker.set('isZoomBouncing', true)
+          marker.setAnimation(googleMaps.maps.Animation.BOUNCE)
+          const timeout = window.setTimeout(() => {
+            marker.setAnimation(null)
+            marker.set('isZoomBouncing', false)
+          }, 2200)
+          animationTimersRef.current.push(timeout)
+        }
+      }
+    })
+
+    syncDensityMode(zoom)
+  }, [applyMarkerIcon, map, syncDensityMode])
 
   useEffect(() => {
     const googleMaps = (window as typeof window & { google?: typeof google }).google
@@ -317,21 +409,8 @@ const ClusteredMarkers: React.FC<ClusteredMarkersProps> = ({ incidents, onMarker
       return
     }
 
+    googleMapsRef.current = googleMaps
     const severityOrder: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
-
-    const createIcon = (severity: Severity): google.maps.Symbol => {
-      const color = SEVERITY_COLOR_MAP[severity] ?? '#94a3b8'
-      const isCritical = severity === 'CRITICAL'
-      return {
-        path: googleMaps.maps.SymbolPath.CIRCLE,
-        scale: isCritical ? 9 : 7,
-        fillColor: color,
-        fillOpacity: 0.95,
-        strokeColor: isCritical ? '#fde68a' : '#0f172a',
-        strokeOpacity: isCritical ? 0.9 : 0.4,
-        strokeWeight: isCritical ? 2.2 : 1.2,
-      }
-    }
 
     markersRef.current.forEach(marker => marker.setMap(null))
     markersRef.current = []
@@ -343,20 +422,30 @@ const ClusteredMarkers: React.FC<ClusteredMarkersProps> = ({ incidents, onMarker
       return
     }
 
+    const zoom = map.getZoom() ?? zoomRef.current
+    zoomRef.current = zoom
+
     markersRef.current = incidents.map((incident) => {
       const marker = new googleMaps.maps.Marker({
         position: incident.coordinates,
         title: incident.title,
-        icon: createIcon(incident.severity),
+        icon: undefined,
         zIndex: incident.severity === 'CRITICAL' ? 2000 : 1000 - severityOrder.indexOf(incident.severity),
         optimized: true,
       })
 
+      marker.set('incidentMeta', { id: incident.id, severity: incident.severity })
+      applyMarkerIcon(marker, incident.severity, zoom)
+
       marker.addListener('click', () => onMarkerClick(incident.id))
 
-      if (incident.severity === 'CRITICAL') {
+      if (incident.severity === 'CRITICAL' && zoom >= 10) {
+        marker.set('isZoomBouncing', true)
         marker.setAnimation(googleMaps.maps.Animation.BOUNCE)
-        const timeout = window.setTimeout(() => marker.setAnimation(null), 2600)
+        const timeout = window.setTimeout(() => {
+          marker.setAnimation(null)
+          marker.set('isZoomBouncing', false)
+        }, 2200)
         animationTimersRef.current.push(timeout)
       }
 
@@ -367,12 +456,13 @@ const ClusteredMarkers: React.FC<ClusteredMarkersProps> = ({ incidents, onMarker
       clusterRef.current = new MarkerClusterer({
         markers: [],
         map,
-        renderer: createClusterRenderer(googleMaps),
+        renderer: createClusterRenderer(googleMaps, () => zoomRef.current),
       })
     }
 
     clusterRef.current.clearMarkers()
     clusterRef.current.addMarkers(markersRef.current)
+    syncDensityMode(zoom)
 
     return () => {
       markersRef.current.forEach(marker => marker.setMap(null))
@@ -380,10 +470,36 @@ const ClusteredMarkers: React.FC<ClusteredMarkersProps> = ({ incidents, onMarker
       animationTimersRef.current.forEach(timer => window.clearTimeout(timer))
       animationTimersRef.current = []
     }
-  }, [map, incidents, onMarkerClick])
+  }, [applyMarkerIcon, incidents, map, onMarkerClick, syncDensityMode])
+
+  useEffect(() => {
+    const googleMaps = (window as typeof window & { google?: typeof google }).google
+    if (!map || !googleMaps) return
+
+    const listener = googleMaps.maps.event.addListener(map, 'zoom_changed', () => {
+      if (zoomRafRef.current) {
+        cancelAnimationFrame(zoomRafRef.current)
+      }
+      zoomRafRef.current = window.requestAnimationFrame(() => {
+        handleZoomUpdate()
+      })
+    })
+
+    zoomListenerRef.current = listener
+    handleZoomUpdate()
+
+    return () => {
+      listener.remove()
+      if (zoomRafRef.current) {
+        cancelAnimationFrame(zoomRafRef.current)
+        zoomRafRef.current = null
+      }
+    }
+  }, [handleZoomUpdate, map])
 
   useEffect(() => {
     return () => {
+      zoomListenerRef.current?.remove()
       clusterRef.current?.clearMarkers()
       clusterRef.current?.setMap(null)
       clusterRef.current = null
@@ -401,10 +517,28 @@ interface HeatLayerProps {
 const HeatLayer: React.FC<HeatLayerProps> = ({ points, showHeatmap }) => {
   const map = useMap()
   const heatmapRef = useRef<google.maps.visualization.HeatmapLayer | null>(null)
+  const zoomListenerRef = useRef<google.maps.MapsEventListener | null>(null)
+  const zoomRafRef = useRef<number | null>(null)
+  const hasHeatPoints = points.length > 0
+
+  const updateHeatmapAppearance = useCallback((zoom: number) => {
+    if (!map || !heatmapRef.current) return
+    const normalizedZoom = zoom || ZOOM_BASELINE
+    const dynamicRadius = clamp(
+      HEATMAP_RADIUS * (ZOOM_BASELINE / Math.max(normalizedZoom, 1)),
+      HEATMAP_RADIUS_MIN,
+      HEATMAP_RADIUS_MAX,
+    )
+    const opacity = clamp(HEATMAP_OPACITY_BASE + normalizedZoom / 25, HEATMAP_OPACITY_BASE, HEATMAP_OPACITY_MAX)
+    heatmapRef.current.set('radius', dynamicRadius)
+    heatmapRef.current.set('opacity', opacity)
+
+    const shouldRender = Boolean(showHeatmap && hasHeatPoints && normalizedZoom >= DENSITY_DISABLE_ZOOM)
+    heatmapRef.current.setMap(shouldRender ? map : null)
+  }, [hasHeatPoints, map, showHeatmap])
 
   useEffect(() => {
     const googleMaps = (window as typeof window & { google?: typeof google }).google
-
     if (!map || !googleMaps || !googleMaps.maps?.visualization) {
       return
     }
@@ -412,7 +546,7 @@ const HeatLayer: React.FC<HeatLayerProps> = ({ points, showHeatmap }) => {
     if (!heatmapRef.current) {
       heatmapRef.current = new googleMaps.maps.visualization.HeatmapLayer({
         radius: HEATMAP_RADIUS,
-        opacity: HEATMAP_OPACITY,
+        opacity: HEATMAP_OPACITY_BASE,
         gradient: HEATMAP_GRADIENT,
       })
     }
@@ -423,23 +557,53 @@ const HeatLayer: React.FC<HeatLayerProps> = ({ points, showHeatmap }) => {
     }))
 
     const heatmap = heatmapRef.current
-    if (weightedLocations.length && showHeatmap) {
+    if (weightedLocations.length) {
       heatmap.setData(weightedLocations)
-      heatmap.setMap(map)
     } else {
       heatmap.setData([])
-      heatmap.setMap(null)
     }
+
+    const currentZoom = map.getZoom() ?? ZOOM_BASELINE
+    updateHeatmapAppearance(currentZoom)
 
     return () => {
       if (!showHeatmap) {
         heatmap.setMap(null)
       }
     }
-  }, [map, points, showHeatmap])
+  }, [hasHeatPoints, map, points, showHeatmap, updateHeatmapAppearance])
+
+  useEffect(() => {
+    const googleMaps = (window as typeof window & { google?: typeof google }).google
+    if (!map || !googleMaps) {
+      return
+    }
+
+    const listener = googleMaps.maps.event.addListener(map, 'zoom_changed', () => {
+      if (zoomRafRef.current) {
+        cancelAnimationFrame(zoomRafRef.current)
+      }
+      zoomRafRef.current = window.requestAnimationFrame(() => {
+        const zoom = map.getZoom() ?? ZOOM_BASELINE
+        updateHeatmapAppearance(zoom)
+      })
+    })
+
+    zoomListenerRef.current = listener
+    updateHeatmapAppearance(map.getZoom() ?? ZOOM_BASELINE)
+
+    return () => {
+      listener.remove()
+      if (zoomRafRef.current) {
+        cancelAnimationFrame(zoomRafRef.current)
+        zoomRafRef.current = null
+      }
+    }
+  }, [map, updateHeatmapAppearance])
 
   useEffect(() => {
     return () => {
+      zoomListenerRef.current?.remove()
       heatmapRef.current?.setMap(null)
       heatmapRef.current = null
     }
@@ -448,11 +612,15 @@ const HeatLayer: React.FC<HeatLayerProps> = ({ points, showHeatmap }) => {
   return null
 }
 
-function createClusterRenderer(googleMaps: typeof google): MarkerClustererOptions['renderer'] {
+function createClusterRenderer(googleMaps: typeof google, getZoom: () => number): MarkerClustererOptions['renderer'] {
   return {
     render: ({ count, position }) => {
       const safeCount = count || 1
-      const size = 30 + Math.log(safeCount) * 10
+      const zoom = getZoom() || ZOOM_BASELINE
+      const baseSize = clamp(30 + Math.log(safeCount) * 12, 28, 70)
+      const zoomScale = clamp(zoom / ZOOM_BASELINE, 0.6, 1.8)
+      const size = clamp(baseSize * zoomScale, 24, 90)
+      const fontSize = clamp(size * 0.4, 12, 32)
       const color = safeCount < 5 ? '#22c55e' : safeCount <= 10 ? '#f97316' : '#ef4444'
       const svg = `<?xml version="1.0" encoding="UTF-8"?>
         <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
@@ -462,7 +630,7 @@ function createClusterRenderer(googleMaps: typeof google): MarkerClustererOption
             </filter>
           </defs>
           <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 4}" fill="${color}" filter="url(#shadow)" />
-          <text x="50%" y="52%" text-anchor="middle" font-family="'Inter', sans-serif" font-size="${Math.max(12, size / 3)}" font-weight="700" fill="#0f172a">${safeCount}</text>
+          <text x="50%" y="52%" text-anchor="middle" font-family="'Inter', sans-serif" font-size="${fontSize}" font-weight="700" fill="#0f172a">${safeCount}</text>
         </svg>`
 
       return new googleMaps.maps.Marker({
