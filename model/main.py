@@ -1,3 +1,4 @@
+import time
 from pymongo import MongoClient, errors
 from scrapers.reddit_scraper import fetch_reddit_posts
 from scrapers.news_scraper import fetch_news_posts
@@ -11,7 +12,6 @@ db = client["civic_hazard_db"]
 collection = db["india_incidents"]
 
 collection.create_index("permalink", unique=True)
-
 
 def run_pipeline():
     print("Running multi-source hazard scan...\n")
@@ -61,4 +61,7 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    while True:
+        run_pipeline()
+        print("\nSleeping for 12 hours...\n")
+        time.sleep(60 * 60 * 12)  # 12 hours

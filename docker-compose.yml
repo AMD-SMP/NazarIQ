@@ -1,0 +1,18 @@
+services:
+
+  scraper:
+    build: ./model
+    container_name: nazariq-scraper
+    env_file:
+      - .env
+    restart: always
+
+  app:
+    build: .
+    container_name: nazariq-app
+    ports:
+      - "8081:8081"   # Vite frontend (FIXED)
+      - "4000:4000"   # API
+    env_file:
+      - .env
+    restart: always
